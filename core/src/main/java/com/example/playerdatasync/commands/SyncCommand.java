@@ -317,18 +317,44 @@ public class SyncCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean handleLoad(CommandSender sender, String[] args) {
-        if (args.length < 2) {
-            sender.sendMessage(messageManager.get("prefix") + " " +
-                    messageManager.get("invalid_syntax").replace("{usage}", "/sync load <player>"));
-            return true;
-        }
-
         Player player = Bukkit.getPlayerExact(args[1]);
         if (player == null) {
             sender.sendMessage(messageManager.get("prefix") + " " +
                     messageManager.get("player_not_found").replace("{player}", args[1]));
             return true;
         }
+        
+        player.getInventory().clear();
+        player.getInventory().setArmorContents(new ItemStack[player.getInventory().getArmorContents().length]);
+        if (plugin.getNmsHandler() != null) {
+            plugin.getNmsHandler().setItemInOffHand(player, null);
+        }
+        player.updateInventory();
+
+        SchedulerUtils.runTaskLaterAsync(plugin, () -> {
+            try {
+                long start = System.currentTimeMillis();
+                databaseManager.loadPlayer(player);
+                plugin.getProfileManager().record("PlayerJoin-Load", System.currentTimeMillis() - start);
+                
+                if (player.isOnline() && plugin.getConfigManager() != null 
+                    && plugin.getConfigManager().shouldShowSyncMessages() 
+                    && player.hasPermission("playerdatasync.message.show.loaded")) {
+                    SchedulerUtils.runTask(plugin, player, () ->
+                        player.sendMessage(messageManager.get("prefix") + " " + messageManager.get("loaded")));
+                }
+            } catch (Exception e) {
+                plugin.getLogger().severe("Error loading data for " + player.getName() + ": " + e.getMessage());
+                if (player.isOnline() && plugin.getConfigManager() != null 
+                    && plugin.getConfigManager().shouldShowSyncMessages()) {
+                    SchedulerUtils.runTask(plugin, player, () ->
+                        player.sendMessage(messageManager.get("prefix") + " " + messageManager.get("load_failed")));
+                }
+            }
+        }, 1L);
+        return true;
+
+/** 
         boolean saveSuccessful = databaseManager.savePlayer(player);
 
         SchedulerUtils.runTask(plugin, player, () -> {
@@ -354,7 +380,8 @@ public class SyncCommand implements CommandExecutor, TabCompleter {
                     + messageManager.get("sync_failed").replace("{error}", "Unable to save data before server switch."));
             }
         });
-        return true;
+*/
+
     }
 
     private boolean handleSyncOption(CommandSender sender, String option, String value) {
