@@ -5,7 +5,9 @@ import com.example.playerdatasync.core.PlayerDataSync;
 import com.example.playerdatasync.managers.BackupManager;
 import com.example.playerdatasync.managers.MessageManager;
 import com.example.playerdatasync.utils.InventoryUtils;
+import com.example.playerdatasync.utils.SchedulerUtils;
 import com.example.playerdatasync.utils.VersionCompatibility;
+import com.example.playerdatasync.database.DatabaseManager;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -13,6 +15,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import su.nightexpress.excellentenchants.api.enchantment.CustomEnchantment;
 import su.nightexpress.excellentenchants.enchantment.EnchantRegistry;
@@ -25,6 +28,7 @@ public class SyncCommand implements CommandExecutor, TabCompleter {
 
     private final PlayerDataSync plugin;
     private final MessageManager messageManager;
+    private final DatabaseManager databaseManager;
 
     private static final List<String> SYNC_OPTIONS = Arrays.asList(
             "coordinates", "position", "xp", "gamemode", "inventory", "enderchest",
@@ -33,12 +37,13 @@ public class SyncCommand implements CommandExecutor, TabCompleter {
     );
 
     private static final List<String> SUB_COMMANDS = Arrays.asList(
-            "reload", "status", "save", "help", "cache", "validate", "backup", "restore", "achievements", "checkupdate", "maintenance", "menu", "profile"
+            "reload", "status", "save", "help", "cache", "validate", "backup", "restore", "achievements", "checkupdate", "maintenance", "menu", "profile", "load"
     );
 
     public SyncCommand(PlayerDataSync plugin) {
         this.plugin = plugin;
         this.messageManager = plugin.getMessageManager();
+        this.databaseManager = plugin.getDatabaseManager();
     }
 
     @Override
@@ -60,6 +65,7 @@ public class SyncCommand implements CommandExecutor, TabCompleter {
             case "maintenance": return handleMaintenance(sender, args);
             case "menu": return handleMenu(sender);
             case "profile": return handleProfile(sender, args);
+            case "load": return handleLoad(sender, args);
             default:
                 if (args.length == 2) return handleSyncOption(sender, args[0], args[1]);
                 else return showHelp(sender);
@@ -307,6 +313,47 @@ public class SyncCommand implements CommandExecutor, TabCompleter {
         }
 
         plugin.getProfileManager().showProfile(sender);
+        return true;
+    }
+
+    private boolean handleLoad(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(messageManager.get("prefix") + " " +
+                    messageManager.get("invalid_syntax").replace("{usage}", "/sync load <player>"));
+            return true;
+        }
+
+        Player player = Bukkit.getPlayerExact(args[1]);
+        if (player == null) {
+            sender.sendMessage(messageManager.get("prefix") + " " +
+                    messageManager.get("player_not_found").replace("{player}", args[1]));
+            return true;
+        }
+        boolean saveSuccessful = databaseManager.savePlayer(player);
+
+        SchedulerUtils.runTask(plugin, player, () -> {
+            if (!player.isOnline()) {
+                return;
+            }
+
+            if (saveSuccessful) {
+                if (plugin.getConfigManager() != null && plugin.getConfigManager().shouldShowSyncMessages() 
+                    && player.hasPermission("playerdatasync.message.show.saving")) {
+                    player.sendMessage(messageManager.get("prefix") + " " + messageManager.get("server_switch_saved"));
+                }
+
+                player.getInventory().clear();
+                player.getInventory().setArmorContents(new ItemStack[player.getInventory().getArmorContents().length]);
+                if (plugin.getNmsHandler() != null) {
+                    plugin.getNmsHandler().setItemInOffHand(player, null);
+                }
+                player.updateInventory();
+            } else if (plugin.getConfigManager() != null && plugin.getConfigManager().shouldShowSyncMessages() 
+                && player.hasPermission("playerdatasync.message.show.errors")) {
+                player.sendMessage(messageManager.get("prefix") + " "
+                    + messageManager.get("sync_failed").replace("{error}", "Unable to save data before server switch."));
+            }
+        });
         return true;
     }
 
